@@ -35,6 +35,21 @@ import Testing
   #expect(try snapshot([1, 3]).notificationKeys.subtracting(seen) == [key(3)])
 }
 
+@Test func newAttentionItemsAreReportedOncePerPR() throws {
+  let pr = { (n: Int) in
+    #"{"number":\#(n),"title":"PR \#(n)","repo":"o/r","url":"https://github.com/o/r/pull/\#(n)"}"#
+  }
+  let snapshot = try AttentionSnapshot(
+    data: Data(
+      #"{"approved":[\#(pr(2))],"feedback":[\#(pr(1))],"failing":[\#(pr(1))],"review":[\#(pr(3))]}"#
+        .utf8))
+  let items = snapshot.newItems(since: ["approved:https://github.com/o/r/pull/2"])
+  // #1 is new in two sections but reported once; #2 was known; #3 never notifies.
+  #expect(items.map(\.pr.number) == [1])
+  #expect(items.first?.section == .feedback)
+  #expect(items.first?.pr.browserURL?.absoluteString == "https://github.com/o/r/pull/1")
+}
+
 @Test func incompleteAttentionOutputIsNotSuccess() {
   #expect(throws: (any Error).self) {
     try AttentionSnapshot(data: Data("{}".utf8))

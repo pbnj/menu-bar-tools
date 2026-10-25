@@ -16,6 +16,7 @@ final class AttentionModel: ObservableObject {
   private var previousScope: [String]?
 
   init() {
+    Notifications.shared.onOpen = { [weak self] url in self?.markSeen(url: url) }
     UserDefaults.standard.register(defaults: ["includeReviews": true, "refreshSeconds": 120])
     Task {
       while !Task.isCancelled {
@@ -51,21 +52,39 @@ final class AttentionModel: ObservableObject {
       defaults.set(options.arguments, forKey: "seenAttentionScope")
       persistSeen()
       if previousScope == options.arguments, let previousKeys, defaults.bool(forKey: "notify") {
-        let added = keys.subtracting(previousKeys).count
-        if added > 0 {
-          do {
-            try await Notifications.shared.send(
-              title: "GitHub needs your attention",
-              body:
-                "\(added) new attention item\(added == 1 ? "" : "s"). Open the menu bar to review.",
-              identifier: UUID().uuidString)
-          } catch { self.error = "Notification failed: \(error.localizedDescription)" }
-        }
+        await notify(next.newItems(since: previousKeys))
       }
       previousKeys = keys
       previousScope = options.arguments
     } catch {
       self.error = error.localizedDescription
+    }
+  }
+
+  /// One notification per PR, up to a few, then a summary for the rest so a
+  /// burst (say, after waking from sleep) doesn't flood Notification Center.
+  private func notify(_ items: [(section: AttentionSection, pr: AttentionPR)]) async {
+    let limit = 3
+    do {
+      for (section, pr) in items.prefix(limit) {
+        try await Notifications.shared.send(
+          title: section.title, subtitle: "\(pr.repo) #\(pr.number)", body: pr.title,
+          identifier: section.key(pr), url: pr.browserURL)
+      }
+      if items.count > limit {
+        let more = items.count - limit
+        try await Notifications.shared.send(
+          title: "GitHub needs your attention",
+          body: "\(more) more new attention item\(more == 1 ? "" : "s"). Open the menu bar to review.",
+          identifier: UUID().uuidString)
+      }
+    } catch { self.error = "Notification failed: \(error.localizedDescription)" }
+  }
+
+  /// A notification click opens the PR, which counts as having seen it.
+  func markSeen(url: URL) {
+    if let pr = snapshot?.sections.values.joined().first(where: { $0.browserURL == url }) {
+      markSeen(pr)
     }
   }
 
@@ -336,6 +355,7 @@ enum AttentionLauncher {
         exit(1)
       }
     } else {
+      Notifications.shared.activate()
       AttentionApp.main()
     }
   }

@@ -72,6 +72,21 @@ public struct AttentionSnapshot: Sendable {
       })
   }
 
+  /// Items whose section key is missing from `previous`, in section order.
+  /// A PR that lands in several sections at once is reported only once.
+  public func newItems(since previous: Set<String>) -> [(
+    section: AttentionSection, pr: AttentionPR
+  )] {
+    var ids = Set<String>()
+    var items: [(section: AttentionSection, pr: AttentionPR)] = []
+    for section in AttentionSection.allCases where section.notifies {
+      for pr in self[section] where !previous.contains(section.key(pr)) {
+        if ids.insert(pr.id).inserted { items.append((section, pr)) }
+      }
+    }
+    return items
+  }
+
   /// Carries the seen set forward to this snapshot. With no prior state (first
   /// launch or a changed scope) everything counts as seen, so only items that
   /// appear afterwards are marked new. Items that drop out are forgotten, so

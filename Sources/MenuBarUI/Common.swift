@@ -10,6 +10,14 @@ public typealias ViewState<Value> = SwiftUI.State<Value>
 @MainActor
 public final class Notifications: NSObject, UNUserNotificationCenterDelegate {
   public static let shared = Notifications()
+  /// Runs before the browser opens a clicked notification's URL.
+  public var onOpen: ((URL) -> Void)?
+
+  /// Installs the delegate so clicks are handled; call it at launch, since a
+  /// click on a delivered notification can be what launches the app.
+  public func activate() {
+    UNUserNotificationCenter.current().delegate = self
+  }
 
   public func requestPermission() async throws -> Bool {
     UNUserNotificationCenter.current().delegate = self
@@ -18,10 +26,15 @@ public final class Notifications: NSObject, UNUserNotificationCenterDelegate {
     ])
   }
 
-  public func send(title: String, body: String, identifier: String) async throws {
+  /// Clicking the notification opens `url` in the browser, when given.
+  public func send(
+    title: String, subtitle: String = "", body: String, identifier: String, url: URL? = nil
+  ) async throws {
     let content = UNMutableNotificationContent()
     content.title = title
+    content.subtitle = subtitle
     content.body = body
+    if let url { content.userInfo = ["url": url.absoluteString] }
     content.sound = .default
     try await UNUserNotificationCenter.current().add(
       UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
@@ -31,6 +44,22 @@ public final class Notifications: NSObject, UNUserNotificationCenterDelegate {
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification
   ) async -> UNNotificationPresentationOptions { [.banner, .sound] }
+
+  public nonisolated func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse
+  ) async {
+    guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+      let string = response.notification.request.content.userInfo["url"] as? String,
+      let url = URL(string: string), ["https", "http"].contains(url.scheme)
+    else { return }
+    await open(url)
+  }
+
+  private func open(_ url: URL) {
+    onOpen?(url)
+    NSWorkspace.shared.open(url)
+  }
 }
 
 public struct ErrorBanner: View {
