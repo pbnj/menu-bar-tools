@@ -9,6 +9,9 @@ final class AttentionModel: ObservableObject {
   @Published var error: String?
   @Published var refreshing = false
   @Published var updatedAt: Date?
+  /// Section-scoped keys the user has already looked at; anything else that
+  /// notifies is shown as new. Persisted so new markers survive a relaunch.
+  @Published private(set) var seen: Set<String> = []
   private var previousKeys: Set<String>?
   private var previousScope: [String]?
 
@@ -42,6 +45,11 @@ final class AttentionModel: ObservableObject {
       updatedAt = Date()
       error = nil
       let keys = next.notificationKeys
+      let stored = defaults.stringArray(forKey: "seenAttentionKeys")
+      let sameScope = defaults.stringArray(forKey: "seenAttentionScope") == options.arguments
+      seen = next.reconcileSeen(sameScope ? stored.map(Set.init) : nil)
+      defaults.set(options.arguments, forKey: "seenAttentionScope")
+      persistSeen()
       if previousScope == options.arguments, let previousKeys, defaults.bool(forKey: "notify") {
         let added = keys.subtracting(previousKeys).count
         if added > 0 {
@@ -60,6 +68,31 @@ final class AttentionModel: ObservableObject {
       self.error = error.localizedDescription
     }
   }
+
+  var newCount: Int { snapshot.map { $0.notificationKeys.subtracting(seen).count } ?? 0 }
+
+  func isNew(_ pr: AttentionPR, in section: AttentionSection) -> Bool {
+    section.notifies && !seen.contains(section.key(pr))
+  }
+
+  /// Opening a PR covers it in every section it appears in.
+  func markSeen(_ pr: AttentionPR) {
+    guard let snapshot else { return }
+    for section in AttentionSection.allCases where section.notifies {
+      if snapshot[section].contains(where: { $0.id == pr.id }) { seen.insert(section.key(pr)) }
+    }
+    persistSeen()
+  }
+
+  func markAllSeen() {
+    guard let snapshot else { return }
+    seen = snapshot.notificationKeys
+    persistSeen()
+  }
+
+  private func persistSeen() {
+    UserDefaults.standard.set(Array(seen), forKey: "seenAttentionKeys")
+  }
 }
 
 struct AttentionPanel: View {
@@ -71,12 +104,13 @@ struct AttentionPanel: View {
   @AppStorage("refreshSeconds") private var refreshSeconds = 120
   @AppStorage("ghPath") private var ghPath = ""
   @AppStorage("notify") private var notify = false
+  @AppStorage("onlyNew") private var onlyNew = false
   @ViewState private var settings = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       HStack {
-        Label("GitHub Attention", systemImage: "tray.full")
+        Label { Text("GitHub Attention") } icon: { GitHubMark().frame(width: 15, height: 15) }
           .font(.headline)
         Spacer()
         if model.refreshing { ProgressView().controlSize(.small) }
@@ -95,37 +129,46 @@ struct AttentionPanel: View {
       if let error = model.error { ErrorBanner(error) }
       if settings { preferences }
       if let snapshot = model.snapshot {
+        if model.newCount > 0 || onlyNew {
+          HStack {
+            Label("\(model.newCount) new", systemImage: "circle.fill")
+              .foregroundStyle(model.newCount > 0 ? Color.accentColor : .secondary)
+              .labelStyle(NewLabelStyle())
+            Spacer()
+            Toggle("Only new", isOn: $onlyNew).toggleStyle(.checkbox)
+            Button("Mark all seen") { model.markAllSeen() }.disabled(model.newCount == 0)
+          }.font(.caption)
+        }
         if snapshot.count == 0 {
           Label("You're all caught up.", systemImage: "checkmark.circle")
             .foregroundStyle(.secondary).padding(.vertical)
         } else {
-          ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-              ForEach(AttentionSection.allCases, id: \.rawValue) { section in
-                if !snapshot[section].isEmpty {
-                  VStack(alignment: .leading, spacing: 6) {
-                    Label(
-                      "\(section.title) (\(snapshot[section].count))", systemImage: section.symbol
-                    )
+          // A ScrollView has no ideal height in a MenuBarExtra window, so only
+          // scroll once the list would outgrow the popover.
+          let visible = Dictionary(
+            uniqueKeysWithValues: AttentionSection.allCases.map { section in
+              (section, rows(snapshot, section))
+            })
+          let sections = VStack(alignment: .leading, spacing: 16) {
+            ForEach(AttentionSection.allCases, id: \.rawValue) { section in
+              if let prs = visible[section], !prs.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                  Label("\(section.title) (\(prs.count))", systemImage: section.symbol)
                     .font(.subheadline.bold())
-                    ForEach(snapshot[section]) { pr in
-                      Button {
-                        if let url = pr.browserURL { NSWorkspace.shared.open(url) }
-                      } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                          Text(pr.title).lineLimit(2).multilineTextAlignment(.leading)
-                          Text("\(pr.repo) #\(pr.number)").font(.caption).foregroundStyle(
-                            .secondary)
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                          .padding(8).contentShape(Rectangle())
-                      }.buttonStyle(.plain).disabled(pr.browserURL == nil)
-                        .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
-                    }
-                  }
+                  ForEach(prs) { pr in row(pr, isNew: model.isNew(pr, in: section)) }
                 }
               }
             }
-          }.frame(maxHeight: 440)
+          }
+          let rows = visible.values.reduce(0) { $0 + $1.count }
+          if rows == 0 {
+            Label("No new items.", systemImage: "checkmark.circle")
+              .foregroundStyle(.secondary).padding(.vertical)
+          } else if rows > 6 {
+            ScrollView { sections }.frame(height: 440)
+          } else {
+            sections
+          }
         }
       } else if model.refreshing {
         Text("Fetching pull requests...").foregroundStyle(.secondary)
@@ -139,7 +182,42 @@ struct AttentionPanel: View {
       }
       Divider()
       AppFooter()
-    }.padding(16).frame(width: 430)
+    }.padding(16).frame(width: 430).menuBarPanel()
+  }
+
+  /// New items first so they are not buried in long sections; otherwise the
+  /// order from `gh attention` is kept.
+  private func rows(_ snapshot: AttentionSnapshot, _ section: AttentionSection) -> [AttentionPR] {
+    let prs = snapshot[section]
+    let new = prs.filter { model.isNew($0, in: section) }
+    if onlyNew { return new }
+    return new + prs.filter { !model.isNew($0, in: section) }
+  }
+
+  private func row(_ pr: AttentionPR, isNew: Bool) -> some View {
+    Button {
+      model.markSeen(pr)
+      if let url = pr.browserURL { NSWorkspace.shared.open(url) }
+    } label: {
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
+        Circle().fill(Color.accentColor).frame(width: 7, height: 7)
+          .opacity(isNew ? 1 : 0).accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 3) {
+          Text(pr.title).fontWeight(isNew ? .semibold : .regular)
+            .lineLimit(2).multilineTextAlignment(.leading)
+          Text(verbatim: "\(pr.repo) #\(pr.number)").font(.caption).foregroundStyle(.secondary)
+        }
+      }.frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8).contentShape(Rectangle())
+    }.buttonStyle(.plain).disabled(pr.browserURL == nil)
+      .background(
+        isNew ? Color.accentColor.opacity(0.1) : Color.primary.opacity(0.04),
+        in: RoundedRectangle(cornerRadius: 6)
+      )
+      .accessibilityLabel(isNew ? "New: \(pr.title)" : pr.title)
+      .contextMenu {
+        if isNew { Button("Mark as seen") { model.markSeen(pr) } }
+      }
   }
 
   private var preferences: some View {
@@ -179,10 +257,67 @@ struct AttentionApp: App {
     MenuBarExtra {
       AttentionPanel(model: model)
     } label: {
-      Label(
-        model.snapshot.map { "\($0.count)" } ?? (model.error == nil ? "..." : "!"),
-        systemImage: model.error == nil ? "tray.full" : "exclamationmark.triangle")
+      let count = model.snapshot?.count
+      RenderedMenuBarLabel(
+        model.error.map { "GitHub Attention error: \($0)" }
+          ?? count.map { "GitHub Attention, \($0) pull requests" } ?? "GitHub Attention, loading"
+      ) { foreground in
+        HStack(spacing: 3) {
+          GitHubMark().foregroundStyle(foreground).frame(width: 16, height: 16)
+          if model.error != nil {
+            CountBadge(text: "!", color: .orange)
+          } else if let count, count > 0 {
+            CountBadge(text: "\(count)", color: .red)
+          }
+        }
+      }
     }.menuBarExtraStyle(.window)
+  }
+}
+
+/// Small accent dot in front of the "N new" summary.
+struct NewLabelStyle: LabelStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    HStack(spacing: 4) {
+      configuration.icon.font(.system(size: 6))
+      configuration.title
+    }
+  }
+}
+
+/// Notification-style pill holding the total count.
+struct CountBadge: View {
+  let text: String
+  let color: Color
+
+  var body: some View {
+    Text(text)
+      .font(.system(size: 10, weight: .bold).monospacedDigit())
+      .foregroundStyle(.white)
+      .padding(.horizontal, 4)
+      .frame(minWidth: 15, minHeight: 15)
+      .background(color, in: Capsule())
+  }
+}
+
+/// GitHub's mark from Octicons (MIT, https://github.com/primer/octicons).
+/// SVG data loads natively on macOS 14+; older systems fall back to a symbol.
+struct GitHubMark: View {
+  private static let image: NSImage? = {
+    let svg = #"""
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      """#
+    let image = NSImage(data: Data(svg.utf8))
+    image?.isTemplate = true
+    return image
+  }()
+
+  var body: some View {
+    if let image = Self.image {
+      Image(nsImage: image).renderingMode(.template).resizable().scaledToFit()
+    } else {
+      Image(systemName: "chevron.left.forwardslash.chevron.right").resizable().scaledToFit()
+    }
   }
 }
 

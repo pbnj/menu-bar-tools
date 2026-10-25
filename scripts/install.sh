@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT/scripts/build.sh"
 mkdir -p "$HOME/Applications"
-for NAME in GitHubAttention AgentStatus; do
+for NAME in GitHubAttention ClaudeStatus; do
   DEST="$HOME/Applications/$NAME.app"
   if [ -e "$DEST" ]; then
     ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$DEST/Contents/Info.plist")"
@@ -16,5 +16,5 @@ for NAME in GitHubAttention AgentStatus; do
 done
 python3 "$ROOT/Adapters/install_integrations.py" install
 open "$HOME/Applications/GitHubAttention.app"
-open "$HOME/Applications/AgentStatus.app"
+open "$HOME/Applications/ClaudeStatus.app"
 printf 'Installed and opened both apps in %s/Applications.\n' "$HOME"
