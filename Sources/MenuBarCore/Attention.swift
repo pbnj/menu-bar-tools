@@ -36,6 +36,13 @@ public enum AttentionSection: String, CaseIterable, Sendable {
     case .review: "clock"
     }
   }
+
+  /// Awaiting review is the user's own PRs waiting on others, so it never
+  /// notifies or counts as new.
+  public var notifies: Bool { self != .review }
+
+  /// Identity of one PR within one section; a PR moving sections is new again.
+  public func key(_ pr: AttentionPR) -> String { "\(rawValue):\(pr.id)" }
 }
 
 public struct AttentionSnapshot: Sendable {
@@ -60,9 +67,18 @@ public struct AttentionSnapshot: Sendable {
 
   public var notificationKeys: Set<String> {
     Set(
-      AttentionSection.allCases.filter { $0 != .review }.flatMap { section in
-        self[section].map { "\(section.rawValue):\($0.id)" }
+      AttentionSection.allCases.filter(\.notifies).flatMap { section in
+        self[section].map(section.key)
       })
+  }
+
+  /// Carries the seen set forward to this snapshot. With no prior state (first
+  /// launch or a changed scope) everything counts as seen, so only items that
+  /// appear afterwards are marked new. Items that drop out are forgotten, so
+  /// one that comes back is new again, matching notifications.
+  public func reconcileSeen(_ seen: Set<String>?) -> Set<String> {
+    guard let seen else { return notificationKeys }
+    return seen.intersection(notificationKeys)
   }
 }
 

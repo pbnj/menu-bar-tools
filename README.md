@@ -31,6 +31,12 @@ manual/periodic refresh, optional draft exclusion, org/repo filters, and optiona
 notifications for new category/PR pairs. The awaiting-review category does not
 generate notifications. The first successful fetch establishes a baseline.
 
+Pairs that arrived since the baseline are marked new (accent dot, bold title) and
+sorted to the top of their section. A "N new" bar offers an "Only new" filter and
+"Mark all seen"; opening a PR, or "Mark as seen" in its context menu, clears its
+marker. Seen state persists across launches and resets when the org/repo scope
+changes.
+
 Settings are in the gear popover. Refresh defaults to two minutes and is clamped
 to at least one minute. The app locates `gh` in `~/.local/bin`, Homebrew locations,
 and the inherited PATH; an absolute-path override is available. Errors remain
@@ -43,13 +49,20 @@ gh extension install pbnj/gh-attention
 gh auth status
 ```
 
-## Agent Status
+## Claude Status
 
-Displays concurrent Claude Code, Copilot CLI, and Pi sessions by project and
-session ID, with Working / Idle / Needs input / Unknown states. Polls local files
-every two seconds. Optional notifications fire when a session transitions to
-Needs input. Unknown is not labeled idle; sessions with no lifecycle events for
-five minutes become Unknown. Known exited processes and ended sessions are hidden.
+The popover lists every running Claude Code session: live `claude` processes are
+matched to tmux panes by terminal, and to hook records by PID for their Working /
+Idle / Needs input / Unknown state. Clicking a session selects its tmux window and
+pane and brings Ghostty forward; if no attached client is viewing that tmux
+session, the most recently active client is switched to it. Sessions outside tmux
+are listed but not clickable. Polls every two seconds. Optional notifications
+fire when a session transitions to Needs input. Sessions with no lifecycle events
+for five minutes become Unknown, as do sessions started before the integrations
+were installed.
+
+The menu bar icon is green while any session is working, orange while any needs
+input, and plain when all are idle; it is dimmed when no session is running.
 
 ### Adapter installation
 
@@ -93,6 +106,11 @@ report is shown with its age; it is not an independently polled account usage
 API. Usage from Claude web/other clients becomes visible only when Claude Code
 reports an updated snapshot. Multiple Claude accounts are not separately modeled.
 
+The menu bar shows a Claude icon followed by both windows as Stats.app-style
+stacked `5h` and `7d` meters; `–` marks an unavailable window. **Menu bar usage**
+in the gear popover picks bars and percentages, bars, percentages, or icon only.
+Session state is shown in the popover and through notifications, not the menu bar.
+
 ### Local storage and privacy
 
 Adapters store only session ID, CLI type, project path, PID when known,
@@ -128,7 +146,7 @@ retained, including the helper scripts until no active sessions need them.
 ./scripts/build.sh
 python3 Tests/Adapters/smoke_pi.py # Optional: installed Pi runtime, no model request
 dist/GitHubAttention.app/Contents/MacOS/GitHubAttention --smoke-test
-dist/AgentStatus.app/Contents/MacOS/AgentStatus --smoke-test
+dist/ClaudeStatus.app/Contents/MacOS/ClaudeStatus --smoke-test
 ```
 
 Swift tests cover real attention schema decoding, deduplication, argument

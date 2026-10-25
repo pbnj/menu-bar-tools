@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 swift build --package-path "$ROOT" -c release
 BIN="$(swift build --package-path "$ROOT" -c release --show-bin-path)"
 mkdir -p "$ROOT/dist"
-for NAME in GitHubAttention AgentStatus; do
+for NAME in GitHubAttention ClaudeStatus; do
   APP="$ROOT/dist/$NAME.app"
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Adapters"
   cp "$BIN/$NAME" "$APP/Contents/MacOS/$NAME"
@@ -27,4 +27,4 @@ for NAME in GitHubAttention AgentStatus; do
   plutil -insert NSHighResolutionCapable -bool true "$PLIST"
   codesign --force --sign "${SIGNING_IDENTITY:--}" "$APP"
 done
-printf 'Built %s/dist/GitHubAttention.app and AgentStatus.app\n' "$ROOT"
+printf 'Built %s/dist/GitHubAttention.app and ClaudeStatus.app\n' "$ROOT"
