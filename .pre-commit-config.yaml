@@ -18,3 +18,27 @@ repos:
         stages: [commit-msg]
         entry: scripts/banned-words.py --commit-msg
         language: system
+      - id: swift-test
+        name: swift test
+        description: Run the Swift unit tests
+        entry: scripts/test.sh swift
+        language: system
+        files: ^(Sources/|Tests/MenuBarCoreTests/|Package\.swift$)
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: python-test
+        name: python adapter tests
+        description: Run the Python adapter unit tests
+        entry: scripts/test.sh python
+        language: system
+        files: ^(Adapters|Tests/Adapters)/
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: node-test
+        name: node adapter tests
+        description: Run the Pi extension tests
+        entry: scripts/test.sh node
+        language: system
+        files: ^(Adapters|Tests/Adapters)/
+        pass_filenames: false
+        stages: [pre-commit]
