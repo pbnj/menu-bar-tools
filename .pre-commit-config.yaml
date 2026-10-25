@@ -1,0 +1,20 @@
+# Config: https://pre-commit.com/#plugins
+# Hooks: https://pre-commit.com/#new-hooks
+---
+default_install_hook_types: [pre-commit, commit-msg]
+repos:
+  - repo: local
+    hooks:
+      - id: banned-words
+        name: banned-words
+        description: Block work names listed in ~/.config/git/banned-words
+        entry: scripts/banned-words.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: banned-words-msg
+        name: banned-words (commit message)
+        description: Block work names in the commit message
+        stages: [commit-msg]
+        entry: scripts/banned-words.py --commit-msg
+        language: system
