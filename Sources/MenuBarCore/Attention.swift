@@ -14,8 +14,9 @@ public struct AttentionPR: Codable, Identifiable, Sendable {
   }
 }
 
+/// Display order: approved PRs lead because they only need a merge.
 public enum AttentionSection: String, CaseIterable, Sendable {
-  case requested, feedback, failing, approved, review
+  case approved, requested, feedback, failing, review
 
   public var title: String {
     switch self {

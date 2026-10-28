@@ -67,6 +67,10 @@ import Testing
     ])
 }
 
+@Test func approvedSectionComesFirst() {
+  #expect(AttentionSection.allCases.first == .approved)
+}
+
 @Test func unsafeBrowserSchemesAreRejected() throws {
   let pr = try JSONDecoder().decode(
     AttentionPR.self,
