@@ -129,3 +129,23 @@ public struct AttentionOptions: Sendable {
     return args
   }
 }
+
+public enum MergeMethod: String, CaseIterable, Sendable {
+  case squash, merge, rebase
+
+  public var title: String {
+    switch self {
+    case .squash: "Squash and merge"
+    case .merge: "Create a merge commit"
+    case .rebase: "Rebase and merge"
+    }
+  }
+
+  /// `gh pr merge` arguments for one PR. Addressed by URL so no local clone is
+  /// needed; outside a clone `--delete-branch` only removes the remote branch.
+  public func arguments(_ pr: AttentionPR, deleteBranch: Bool) -> [String] {
+    var args = ["pr", "merge", pr.url, "--\(rawValue)"]
+    if deleteBranch { args.append("--delete-branch") }
+    return args
+  }
+}

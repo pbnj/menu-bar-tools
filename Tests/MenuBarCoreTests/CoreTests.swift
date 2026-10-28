@@ -71,6 +71,16 @@ import Testing
   #expect(AttentionSection.allCases.first == .approved)
 }
 
+@Test func mergeArgumentsAddressThePRByURL() {
+  let pr = AttentionPR(number: 7, title: "t", repo: "o/r", url: "https://github.com/o/r/pull/7")
+  #expect(
+    MergeMethod.squash.arguments(pr, deleteBranch: false)
+      == ["pr", "merge", "https://github.com/o/r/pull/7", "--squash"])
+  #expect(
+    MergeMethod.rebase.arguments(pr, deleteBranch: true)
+      == ["pr", "merge", "https://github.com/o/r/pull/7", "--rebase", "--delete-branch"])
+}
+
 @Test func unsafeBrowserSchemesAreRejected() throws {
   let pr = try JSONDecoder().decode(
     AttentionPR.self,

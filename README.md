@@ -31,6 +31,12 @@ manual/periodic refresh, optional draft exclusion, org/repo filters, and optiona
 notifications for new category/PR pairs. The awaiting-review category does not
 generate notifications. The first successful fetch establishes a baseline.
 
+Approved PRs are listed first. Each has a merge button (also in its context menu)
+that asks for a second click to confirm, then runs `gh pr merge <url>` with the
+merge method chosen in Settings (squash by default) and, optionally,
+`--delete-branch`. Branch protection still applies: a failed merge shows gh's
+error and leaves the PR in place.
+
 Pairs that arrived since the baseline are marked new (accent dot, bold title) and
 sorted to the top of their section. A "N new" bar offers an "Only new" filter and
 "Mark all seen"; opening a PR, or "Mark as seen" in its context menu, clears its

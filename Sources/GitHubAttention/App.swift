@@ -9,6 +9,8 @@ final class AttentionModel: ObservableObject {
   @Published var error: String?
   @Published var refreshing = false
   @Published var updatedAt: Date?
+  /// PR ids with a `gh pr merge` in flight.
+  @Published private(set) var merging: Set<String> = []
   /// Section-scoped keys the user has already looked at; anything else that
   /// notifies is shown as new. Persisted so new markers survive a relaunch.
   @Published private(set) var seen: Set<String> = []
@@ -59,6 +61,26 @@ final class AttentionModel: ObservableObject {
     } catch {
       self.error = error.localizedDescription
     }
+  }
+
+  /// Merges with the configured method, then refreshes so the PR drops out.
+  func merge(_ pr: AttentionPR) async {
+    guard pr.browserURL != nil, merging.insert(pr.id).inserted else { return }
+    defer { merging.remove(pr.id) }
+    let defaults = UserDefaults.standard
+    let method = MergeMethod(rawValue: defaults.string(forKey: "mergeMethod") ?? "") ?? .squash
+    do {
+      let executable = try ProcessRunner.executable(
+        "gh", override: defaults.string(forKey: "ghPath") ?? "")
+      _ = try await ProcessRunner.run(
+        executable,
+        arguments: method.arguments(pr, deleteBranch: defaults.bool(forKey: "deleteBranch")))
+      error = nil
+    } catch {
+      self.error = "Merge of \(pr.repo) #\(pr.number) failed: \(error.localizedDescription)"
+      return
+    }
+    await refresh()
   }
 
   /// One notification per PR, up to a few, then a summary for the rest so a
@@ -124,7 +146,11 @@ struct AttentionPanel: View {
   @AppStorage("ghPath") private var ghPath = ""
   @AppStorage("notify") private var notify = false
   @AppStorage("onlyNew") private var onlyNew = false
+  @AppStorage("mergeMethod") private var mergeMethod = MergeMethod.squash.rawValue
+  @AppStorage("deleteBranch") private var deleteBranch = false
   @ViewState private var settings = false
+  /// PR awaiting a second click to confirm its merge.
+  @ViewState private var confirmingMerge: String?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -174,7 +200,9 @@ struct AttentionPanel: View {
                 VStack(alignment: .leading, spacing: 6) {
                   Label("\(section.title) (\(prs.count))", systemImage: section.symbol)
                     .font(.subheadline.bold())
-                  ForEach(prs) { pr in row(pr, isNew: model.isNew(pr, in: section)) }
+                  ForEach(prs) { pr in
+                    row(pr, isNew: model.isNew(pr, in: section), mergeable: section == .approved)
+                  }
                 }
               }
             }
@@ -213,7 +241,47 @@ struct AttentionPanel: View {
     return new + prs.filter { !model.isNew($0, in: section) }
   }
 
-  private func row(_ pr: AttentionPR, isNew: Bool) -> some View {
+  private func row(_ pr: AttentionPR, isNew: Bool, mergeable: Bool) -> some View {
+    HStack(spacing: 0) {
+      link(pr, isNew: isNew)
+      if mergeable && pr.browserURL != nil { mergeControl(pr).padding(.trailing, 8) }
+    }
+    .background(
+      isNew ? Color.accentColor.opacity(0.1) : Color.primary.opacity(0.04),
+      in: RoundedRectangle(cornerRadius: 6)
+    )
+    .contextMenu {
+      if isNew { Button("Mark as seen") { model.markSeen(pr) } }
+      if mergeable && pr.browserURL != nil {
+        Button("Merge…") { confirmingMerge = pr.id }.disabled(model.merging.contains(pr.id))
+      }
+    }
+  }
+
+  /// Merging can't be undone, so the first click only arms a confirmation.
+  @ViewBuilder private func mergeControl(_ pr: AttentionPR) -> some View {
+    let method = MergeMethod(rawValue: mergeMethod) ?? .squash
+    if model.merging.contains(pr.id) {
+      ProgressView().controlSize(.small).help("Merging…")
+    } else if confirmingMerge == pr.id {
+      HStack(spacing: 4) {
+        Button("Cancel") { confirmingMerge = nil }
+        Button(method.title) {
+          confirmingMerge = nil
+          Task { await model.merge(pr) }
+        }.buttonStyle(.borderedProminent).tint(.green)
+      }.controlSize(.small)
+    } else {
+      Button {
+        confirmingMerge = pr.id
+      } label: {
+        Image(systemName: "arrow.triangle.merge")
+      }.buttonStyle(.borderless).help("\(method.title) \(pr.repo) #\(pr.number)")
+        .accessibilityLabel("Merge \(pr.title)")
+    }
+  }
+
+  private func link(_ pr: AttentionPR, isNew: Bool) -> some View {
     Button {
       model.markSeen(pr)
       if let url = pr.browserURL { NSWorkspace.shared.open(url) }
@@ -229,14 +297,7 @@ struct AttentionPanel: View {
       }.frame(maxWidth: .infinity, alignment: .leading)
         .padding(8).contentShape(Rectangle())
     }.buttonStyle(.plain).disabled(pr.browserURL == nil)
-      .background(
-        isNew ? Color.accentColor.opacity(0.1) : Color.primary.opacity(0.04),
-        in: RoundedRectangle(cornerRadius: 6)
-      )
       .accessibilityLabel(isNew ? "New: \(pr.title)" : pr.title)
-      .contextMenu {
-        if isNew { Button("Mark as seen") { model.markSeen(pr) } }
-      }
   }
 
   private var preferences: some View {
@@ -248,6 +309,10 @@ struct AttentionPanel: View {
       Toggle("Exclude drafts", isOn: $noDrafts)
       Stepper(
         "Refresh every \(refreshSeconds) seconds", value: $refreshSeconds, in: 60...900, step: 30)
+      Picker("Merge approved PRs with", selection: $mergeMethod) {
+        ForEach(MergeMethod.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
+      }
+      Toggle("Delete branch after merge", isOn: $deleteBranch)
       Toggle("Notify about new attention items", isOn: $notify)
         .onChange(of: notify) { enabled in
           guard enabled else { return }
